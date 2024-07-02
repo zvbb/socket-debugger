@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"socketTest/play"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -160,10 +161,13 @@ func clientSend(conn net.Conn) (*widget.Form, *widget.Entry) {
 
 		// 读取文件数据
 		fileData := make([]byte, fileSize)
+
 		_, err = io.ReadFull(reader, fileData)
 		if err != nil {
 			panic(err)
 		}
+
+		play.Play(fileData)
 
 		// 读取Tailer
 		tailer := make([]byte, TailerLength)
