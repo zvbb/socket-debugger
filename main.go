@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -16,6 +17,8 @@ import (
 
 	"fyne.io/fyne/v2/widget"
 )
+
+var conn net.Conn
 
 func main() {
 	myApp := app.New()
@@ -42,6 +45,7 @@ func main() {
 
 func client(parent fyne.Window, parentContainer *container.AppTabs) *widget.Form {
 	hostVar := widget.NewEntry()
+	hostVar.PlaceHolder = "127.0.0.1"
 	portVar := widget.NewEntry()
 
 	form := &widget.Form{
@@ -57,7 +61,8 @@ func client(parent fyne.Window, parentContainer *container.AppTabs) *widget.Form
 		server := fmt.Sprintf("%s:%s", hostVar.Text, portVar.Text)
 
 		// 连接服务器
-		conn, err := net.Dial("tcp", server)
+		var err error
+		conn, err = net.Dial("tcp", server)
 		if err != nil {
 			// 显示连接失败的弹框
 			dialog.ShowError(
@@ -82,54 +87,42 @@ func client(parent fyne.Window, parentContainer *container.AppTabs) *widget.Form
 }
 
 func clientSend(conn net.Conn) (*widget.Form, *widget.Entry) {
+	// 头部
 	headerVar := widget.NewEntry()
+	headerVar.SetPlaceHolder("F1F2")
+
+	// 尾部
 	tailerVar := widget.NewEntry()
+	tailerVar.SetPlaceHolder("F3F4")
+
+	// 长度
 	lengthVar := widget.NewEntry()
+	lengthVar.SetPlaceHolder("4")
+
+	// 大端模式（小端模式）
 	endianVar := widget.NewSelect([]string{"Big", "Small"}, func(value string) {})
 	endianVar.Selected = "Big"
-	// 创建一个大的文本框
-	textArea := widget.NewMultiLineEntry()
+
+	// body
+	bodyArea := widget.NewMultiLineEntry()
+
+	// 相应
 	responseArea := widget.NewMultiLineEntry()
 
 	form := &widget.Form{
 		Items: []*widget.FormItem{
 			{Text: "Header", Widget: headerVar},
 			{Text: "Tailer", Widget: tailerVar},
-			{Text: "Length", Widget: lengthVar},
+			{Text: "Length(byte)", Widget: lengthVar},
 			{Text: "Endian", Widget: endianVar},
-			{Text: "Body", Widget: textArea},
+			{Text: "Body", Widget: bodyArea},
 		},
 		SubmitText: "Send",
 	}
 
 	form.OnSubmit = func() {
-		// 将字符串转换为字节序列
-		header := []byte(headerVar.Text)
-		trailer := []byte(tailerVar.Text)
-		body := []byte(textArea.Text) // 假设 utf8.encodeRuneInBytes 是一个函数，将字符串转换为字节序列
-		// Length 是 Body 的长度
-		length := uint32(len(body))
+		buf := socketPack(headerVar, tailerVar, bodyArea, endianVar)
 
-		var endian binary.ByteOrder
-
-		// Endian 决定了字节序，这里假设是 big endian
-		var buf bytes.Buffer
-
-		// 写入 Length，转换为 big endian
-		if endianVar.Selected == "Big" {
-			endian = binary.BigEndian
-		} else {
-			endian = binary.LittleEndian
-		}
-
-		// 写入 Header
-		binary.Write(&buf, endian, header)
-		// 写入 Length
-		binary.Write(&buf, endian, length)
-		// 写入 Body
-		binary.Write(&buf, endian, body)
-		// 写入 Tailer
-		binary.Write(&buf, endian, trailer)
 		// 发送构造好的消息
 		_, err := conn.Write(buf.Bytes())
 		if err != nil {
@@ -141,6 +134,44 @@ func clientSend(conn net.Conn) (*widget.Form, *widget.Entry) {
 	}
 
 	return form, responseArea
+}
+
+func socketPack(headerVar, tailerVar, bodyArea *widget.Entry, endianVar *widget.Select) (bytes.Buffer) {
+	headerStr := headerVar.Text
+	if headerStr == "" {
+		headerStr = headerVar.PlaceHolder
+	}
+	header, _ := hex.DecodeString(headerStr)
+
+	body := []byte(bodyArea.Text)
+	length := uint32(len(body))
+
+	tailerStr := tailerVar.Text
+	if tailerStr == "" {
+		tailerStr = tailerVar.PlaceHolder
+	}
+	trailer, _ := hex.DecodeString(tailerStr)
+
+	var endian binary.ByteOrder
+
+	if endianVar.Selected == "Big" {
+		endian = binary.BigEndian
+	} else {
+		endian = binary.LittleEndian
+	}
+
+	var buf bytes.Buffer
+
+	// 写入 Header
+	binary.Write(&buf, endian, header)
+	// 写入 Length
+	binary.Write(&buf, endian, length)
+	// 写入 Body
+	binary.Write(&buf, endian, body)
+	// 写入 Tailer
+	binary.Write(&buf, endian, trailer)
+
+	return buf
 }
 
 func setHeader() *fyne.Container {
