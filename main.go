@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"os"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -16,6 +19,12 @@ import (
 	"fyne.io/fyne/v2/theme"
 
 	"fyne.io/fyne/v2/widget"
+)
+
+const (
+	HeaderLength = 2
+	LengthSize   = 4
+	TailerLength = 2
 )
 
 var conn net.Conn
@@ -131,12 +140,64 @@ func clientSend(conn net.Conn) (*widget.Form, *widget.Entry) {
 		}
 
 		fmt.Println("消息发送成功")
+
+		// 创建bufio.Reader以方便读取
+		reader := bufio.NewReader(conn)
+
+		// 读取Header
+		header := make([]byte, HeaderLength)
+		_, err = io.ReadFull(reader, header)
+		if err != nil {
+			panic(err)
+		}
+
+		lengthBytes := make([]byte, LengthSize)
+		_, err = io.ReadFull(reader, lengthBytes)
+		if err != nil {
+			panic(err)
+		}
+		fileSize := binary.BigEndian.Uint32(lengthBytes) // 转换为uint32
+
+		// 读取文件数据
+		fileData := make([]byte, fileSize)
+		_, err = io.ReadFull(reader, fileData)
+		if err != nil {
+			panic(err)
+		}
+
+		// 读取Tailer
+		tailer := make([]byte, TailerLength)
+		_, err = io.ReadFull(reader, tailer)
+		if err != nil {
+			panic(err)
+		}
+
+		// 确认Tailer是否正确，以确保数据包接收完成
+		expectedTailer, _ := hex.DecodeString("F3F4") // 假设tailer是"F3F4"
+		if !bytes.Equal(tailer, expectedTailer) {
+			panic("无效的tailer，数据包可能已损坏")
+		}
+
+		// 打开文件用于写入接收到的文件数据
+		file, err := os.Create("received_file.bin")
+		if err != nil {
+			panic(err)
+		}
+		defer file.Close()
+
+		// 将接收到的文件数据写入到本地文件
+		_, err = file.Write(fileData)
+		if err != nil {
+			panic(err)
+		}
+
+		fmt.Println("文件接收完成")
 	}
 
 	return form, responseArea
 }
 
-func socketPack(headerVar, tailerVar, bodyArea *widget.Entry, endianVar *widget.Select) (bytes.Buffer) {
+func socketPack(headerVar, tailerVar, bodyArea *widget.Entry, endianVar *widget.Select) bytes.Buffer {
 	headerStr := headerVar.Text
 	if headerStr == "" {
 		headerStr = headerVar.PlaceHolder
