@@ -90,13 +90,13 @@ func client(parent fyne.Window, parentContainer *container.AppTabs) *widget.Form
 
 		parentContainer.RemoveIndex(0)
 
-		sendForm, respose := clientSend(conn)
+		sendForm, respose := clientSend(parent, conn)
 		parentContainer.Append(container.NewTabItem("Client", container.NewVBox(reconnectButton, sendForm, respose)))
 	}
 	return form
 }
 
-func clientSend(conn net.Conn) (*widget.Form, *widget.Entry) {
+func clientSend(parent fyne.Window, conn net.Conn) (*widget.Form, *widget.Entry) {
 	// 头部
 	headerVar := widget.NewEntry()
 	headerVar.SetPlaceHolder("F1F2")
@@ -116,6 +116,25 @@ func clientSend(conn net.Conn) (*widget.Form, *widget.Entry) {
 	// body
 	bodyArea := widget.NewMultiLineEntry()
 
+	var fileBytes []byte
+
+	fileSelector := dialog.NewFileOpen(func(uc fyne.URIReadCloser, err error) {
+		if err != nil {
+			dialog.ShowError(err, parent)
+			return
+		}
+		if uc == nil {
+			return
+		}
+		fileBytes, _ = io.ReadAll(uc)
+		bodyArea.DisableableWidget.Disable()
+		bodyArea.SetText(hex.EncodeToString(fileBytes))
+	}, parent)
+
+	fileBtn := widget.NewButtonWithIcon("", theme.FileIcon(), func() {
+		fileSelector.Show()
+	})
+
 	// 相应
 	responseArea := widget.NewMultiLineEntry()
 
@@ -126,12 +145,13 @@ func clientSend(conn net.Conn) (*widget.Form, *widget.Entry) {
 			{Text: "Length(byte)", Widget: lengthVar},
 			{Text: "Endian", Widget: endianVar},
 			{Text: "Body", Widget: bodyArea},
+			{Text: "select file", Widget: fileBtn},
 		},
 		SubmitText: "Send",
 	}
 
 	form.OnSubmit = func() {
-		buf := socketPack(headerVar, tailerVar, bodyArea, endianVar)
+		buf := socketPack(headerVar, tailerVar, bodyArea, fileBytes, endianVar)
 
 		// 发送构造好的消息
 		_, err := conn.Write(buf.Bytes())
@@ -201,14 +221,21 @@ func clientSend(conn net.Conn) (*widget.Form, *widget.Entry) {
 	return form, responseArea
 }
 
-func socketPack(headerVar, tailerVar, bodyArea *widget.Entry, endianVar *widget.Select) bytes.Buffer {
+func socketPack(headerVar, tailerVar, bodyArea *widget.Entry,
+	fileBytes []byte,
+	endianVar *widget.Select) bytes.Buffer {
 	headerStr := headerVar.Text
 	if headerStr == "" {
 		headerStr = headerVar.PlaceHolder
 	}
 	header, _ := hex.DecodeString(headerStr)
 
-	body := []byte(bodyArea.Text)
+	var body []byte
+	if fileBytes == nil {
+		body = []byte(bodyArea.Text)
+	} else {
+		body = fileBytes
+	}
 	length := uint32(len(body))
 
 	tailerStr := tailerVar.Text
