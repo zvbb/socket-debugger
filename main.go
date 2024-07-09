@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"socketTest/play"
 
 	"fyne.io/fyne/v2"
@@ -55,7 +54,7 @@ func main() {
 
 func client(parent fyne.Window, parentContainer *container.AppTabs) *widget.Form {
 	hostVar := widget.NewEntry()
-	hostVar.PlaceHolder = "127.0.0.1"
+	hostVar.PlaceHolder = "dev.caibeiyun.cn"
 	portVar := widget.NewEntry()
 
 	form := &widget.Form{
@@ -165,20 +164,79 @@ func clientSend(parent fyne.Window, conn net.Conn) (*widget.Form, *widget.Entry)
 		// 创建bufio.Reader以方便读取
 		reader := bufio.NewReader(conn)
 
-		// 读取Header
-		header := make([]byte, HeaderLength)
-		_, err = io.ReadFull(reader, header)
-		if err != nil {
-			panic(err)
-		}
+		// // 同步响应
+		// syncResponse(reader)
 
+		// 流式相应
+		streamResponse(reader)
+
+		fmt.Println("文件接收完成")
+	}
+
+	return form, responseArea
+}
+
+func syncResponse(reader *bufio.Reader) {
+	// 读取Header
+	header := make([]byte, HeaderLength)
+	_, err := io.ReadFull(reader, header)
+	if err != nil {
+		panic(err)
+	}
+
+	lengthBytes := make([]byte, LengthSize)
+	_, err = io.ReadFull(reader, lengthBytes)
+	if err != nil {
+		panic(err)
+	}
+
+	// 转换为uint32
+	fileSize := binary.BigEndian.Uint32(lengthBytes)
+
+	// 读取文件数据
+	fileData := make([]byte, fileSize)
+
+	_, err = io.ReadFull(reader, fileData)
+	if err != nil {
+		panic(err)
+	}
+
+	play.Play(fileData)
+
+	// 读取Tailer
+	tailer := make([]byte, TailerLength)
+	_, err = io.ReadFull(reader, tailer)
+	if err != nil {
+		panic(err)
+	}
+
+	// 确认Tailer是否正确，以确保数据包接收完成
+	expectedTailer, _ := hex.DecodeString("F3F4") // 假设tailer是"F3F4"
+	if !bytes.Equal(tailer, expectedTailer) {
+		panic("无效的tailer，数据包可能已损坏")
+	}
+}
+
+func streamResponse(reader *bufio.Reader) {
+	// 读取Header
+	header := make([]byte, HeaderLength)
+	_, err := io.ReadFull(reader, header)
+	if err != nil {
+		panic(err)
+	}
+
+	// 确认Tailer是否正确，以确保数据包接收完成
+	expectedTailer, _ := hex.DecodeString("F3F4")
+
+	for {
 		lengthBytes := make([]byte, LengthSize)
 		_, err = io.ReadFull(reader, lengthBytes)
 		if err != nil {
 			panic(err)
 		}
-		fileSize := binary.BigEndian.Uint32(lengthBytes) // 转换为uint32
 
+		// 转换为uint32
+		fileSize := binary.BigEndian.Uint32(lengthBytes)
 		// 读取文件数据
 		fileData := make([]byte, fileSize)
 
@@ -187,38 +245,13 @@ func clientSend(parent fyne.Window, conn net.Conn) (*widget.Form, *widget.Entry)
 			panic(err)
 		}
 
-		play.Play(fileData)
-
-		// 读取Tailer
-		tailer := make([]byte, TailerLength)
-		_, err = io.ReadFull(reader, tailer)
-		if err != nil {
-			panic(err)
+		if !bytes.Equal(fileData, expectedTailer) {
+			play.Pcm(fileData)
+			continue
 		}
 
-		// 确认Tailer是否正确，以确保数据包接收完成
-		expectedTailer, _ := hex.DecodeString("F3F4") // 假设tailer是"F3F4"
-		if !bytes.Equal(tailer, expectedTailer) {
-			panic("无效的tailer，数据包可能已损坏")
-		}
-
-		// 打开文件用于写入接收到的文件数据
-		file, err := os.Create("received_file.bin")
-		if err != nil {
-			panic(err)
-		}
-		defer file.Close()
-
-		// 将接收到的文件数据写入到本地文件
-		_, err = file.Write(fileData)
-		if err != nil {
-			panic(err)
-		}
-
-		fmt.Println("文件接收完成")
+		break
 	}
-
-	return form, responseArea
 }
 
 func socketPack(headerVar, tailerVar, bodyArea *widget.Entry,
